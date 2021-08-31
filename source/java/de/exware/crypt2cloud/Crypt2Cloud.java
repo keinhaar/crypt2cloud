@@ -15,8 +15,11 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.KeySpec;
+import java.text.DateFormat;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Properties;
@@ -46,7 +49,8 @@ public class Crypt2Cloud
     {
         boolean backup = getArgumentIndex(args, "--backup") >= 0;
         boolean restore = getArgumentIndex(args, "--restore") >= 0;
-        if(backup == restore)
+        boolean list = getArgumentIndex(args, "--list") >= 0;
+        if(oneTrue(backup, restore, list) == false)
         {
             printSyntax();
             System.exit(-1);
@@ -54,12 +58,26 @@ public class Crypt2Cloud
         Crypt2Cloud cs = new Crypt2Cloud();
         File plainDir = null;
         File cryptDir = null;
+        String path = null;
         char[] pass = null;
         try
         {
             plainDir = new File(getArgumentValue(args, "--plaindir", null));
             cryptDir = new File(getArgumentValue(args, "--cryptdir", null));
             String p = getArgumentValue(args, "--password", null);            
+            path = getArgumentValue(args, "--path", null); 
+            if(path == null)
+            {
+            	path = "";
+            }
+            else
+            {
+            	path.replace('\\', '/');
+            	if(path.charAt(0) != '/')
+            	{
+            		path = "/" + path;
+            	}
+            }
             pass = p.toCharArray();
             p = null;
         }
@@ -75,19 +93,54 @@ public class Crypt2Cloud
         {
             if(backup)
             {
-                cs.backup(pass, plainDir, cryptDir);
+                cs.backup(pass, plainDir, cryptDir, path);
             }
             else if(restore)
             {
-                cs.restore(pass, cryptDir, plainDir);
+                cs.restore(pass, cryptDir, plainDir, path);
+            }
+            else if(list)
+            {
+                cs.list(pass, cryptDir, path);
             }
         }
     }
 
+    /**
+     * Check if only one of the Arguments is true.
+     * @param values
+     * @return
+     */
+    private static boolean oneTrue(boolean ... values)
+    {
+    	boolean oneTrue = false;
+    	for(int i=0;i<values.length;i++)
+    	{
+    		if(oneTrue && values[i])
+    		{
+    			oneTrue = false;
+    			break;
+    		}
+    		if(values[i])
+    		{
+    			oneTrue = true;
+    		}
+    	}
+    	return oneTrue;
+    }
+    
+    /**
+     * Print usage syntax
+     */
     private static void printSyntax()
     {
         System.err.println("Usage:");
-        System.err.println("crypt2cloud [--backup | --restore] --password PASSWORD --plaindir DIRECTORY --cryptdir DIRECTORY");
+        System.err.println("crypt2cloud [--backup | --restore | --list] --password PASSWORD --plaindir DIRECTORY --cryptdir DIRECTORY [--path SUBPATH]");
+        System.err.println("--backup will store plain files into the crypted directory.");
+        System.err.println("--restore will restore plain files from the crypted directory.");
+        System.err.println("--list will list the files stored in the crypted directory.");
+        System.err.println("--path will limit the operation to only the given path. Useful to limit restore to single files or directories, or if you know, that backup only needs to be performed on some directories.");
+        System.err.println("Version 1.0");
     }
     
     public static String getArgumentValue(String[] args, String arg,String defaultValue)
@@ -125,7 +178,7 @@ public class Crypt2Cloud
         return -1;
     }
 
-    private void backup(char[] pass, File source, File cryptDir) throws Exception
+    private void backup(char[] pass, File source, File cryptDir, String pathLimit) throws Exception
     {
         long totalSize = 0;
         filesInUse.clear();
@@ -153,64 +206,74 @@ public class Crypt2Cloud
                     name.replace('\\', '/');
                     props.put("file_" + i, name);
                     props.put("file_" + i + "_isDirectory", "" + ch[i].isDirectory());
+                    props.put("file_" + i + "_lastModified", "" + ch[i].lastModified());
                 }
             }
-            else
+            if(path.startsWith(pathLimit))
             {
-                String oldMd5 = null;
-                try
+            	if(f.isDirectory() == false)
                 {
-                    Properties oldProps = loadProperties(key, path, cryptDir);
-                    oldMd5 = oldProps.getProperty("md5sum");
-                }
-                catch(Exception ex)
-                {
-                    System.out.println("Error loading old Properties. Will backup completely: " + f);
-                }
-                String md5 = md5(f);
-                if(md5.equals(oldMd5))
-                {
-                    System.out.println(f + " not modified");
-                    continue;
-                }
-                else
-                {
-                    Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5PADDING");
-                    byte[] iv = new SecureRandom().generateSeed(16);
-                    cipher.init(Cipher.ENCRYPT_MODE, key, new IvParameterSpec(iv));
-                    Md5InputStream in = new Md5InputStream(new BufferedInputStream(new FileInputStream(f)));
-                    BufferedOutputStream bout = new BufferedOutputStream(new FileOutputStream(file));
-                    bout.write(iv);
-                    CipherOutputStream out = new CipherOutputStream(bout, cipher);
-                    copy(in, out);
-                    in.close();
-                    out.close();
-                    props.put("md5sum", in.getMd5());
-                    props.put("lastModified", "" + f.lastModified());
-                    totalSize += f.length();
-                    if(f.equals(source) == false)
+                    String oldMd5 = null;
+                    try
                     {
-                        System.out.println(f + " stored to " + file);
+                        Properties oldProps = loadProperties(key, path, cryptDir);
+                        oldMd5 = oldProps.getProperty("md5sum");
+                    }
+                    catch(Exception ex)
+                    {
+                        System.out.println("Error loading old Properties. Will backup completely: " + f);
+                    }
+                    String md5 = md5(f);
+                    if(md5.equals(oldMd5))
+                    {
+                        System.out.println(f + " not modified");
+                        continue;
+                    }
+                    else
+                    {
+                        Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5PADDING");
+                        byte[] iv = new SecureRandom().generateSeed(16);
+                        cipher.init(Cipher.ENCRYPT_MODE, key, new IvParameterSpec(iv));
+                        Md5InputStream in = new Md5InputStream(new BufferedInputStream(new FileInputStream(f)));
+                        BufferedOutputStream bout = new BufferedOutputStream(new FileOutputStream(file));
+                        bout.write(iv);
+                        CipherOutputStream out = new CipherOutputStream(bout, cipher);
+                        copy(in, out);
+                        in.close();
+                        out.close();
+                        props.put("md5sum", in.getMd5());
+                        props.put("lastModified", "" + f.lastModified());
+                        totalSize += f.length();
+                        if(f.equals(source) == false)
+                        {
+                            System.out.println(f + " stored to " + file);
+                        }
                     }
                 }
+                Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5PADDING");
+                byte[] iv = new SecureRandom().generateSeed(16);
+                cipher.init(Cipher.ENCRYPT_MODE, key, new IvParameterSpec(iv));
+                filex.getParentFile().mkdirs();
+                OutputStream out = new BufferedOutputStream(new FileOutputStream(filex));
+                out.write(iv);
+                out.flush();
+                out = new CipherOutputStream(out, cipher);
+                props.store(out, null);
+                out.close();
+                System.out.println(f + " stored meta to " + filex);
+                System.out.println("Total Size: " + totalSize);
             }
-            Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5PADDING");
-            byte[] iv = new SecureRandom().generateSeed(16);
-            cipher.init(Cipher.ENCRYPT_MODE, key, new IvParameterSpec(iv));
-            filex.getParentFile().mkdirs();
-            OutputStream out = new BufferedOutputStream(new FileOutputStream(filex));
-            out.write(iv);
-            out.flush();
-            out = new CipherOutputStream(out, cipher);
-            props.store(out, null);
-            out.close();
-            System.out.println(f + " stored meta to " + filex);
-            System.out.println("Total Size: " + totalSize);
         }
         deleteOldFiles(cryptDir, filesInUse);
         filesInUse.clear();
     }
 
+    /**
+     * Deletes files that do no longer exist in plain directory.
+     * @param cryptDir
+     * @param filesInUse
+     * @throws IOException
+     */
     private void deleteOldFiles(File cryptDir, Set<File> filesInUse) throws IOException
     {
         System.out.println("Deleting unused files");
@@ -232,10 +295,10 @@ public class Crypt2Cloud
         }
     }
 
-    private String getPath(File source, File file)
+    private String getPath(File plainDir, File file)
     {
         String path = file.getAbsolutePath();
-        int cutPoint = source.getAbsolutePath().length();
+        int cutPoint = plainDir.getAbsolutePath().length();
         path = path.substring(cutPoint);
         path.replace('\\', '/');
         return path;
@@ -381,8 +444,7 @@ public class Crypt2Cloud
                 cf.path = path + "/" + filename;
                 cf.name = filename;
                 cf.isDirectory = Boolean.parseBoolean(props.getProperty("file_" + i + "_isDirectory"));
-                cf.md5 = props.getProperty("md5sum");
-                String tmp = props.getProperty("lastModified");
+                String tmp = props.getProperty("file_" + i + "_lastModified");
                 if(tmp != null)
                 {
                     cf.lastModified = Long.parseLong(tmp);
@@ -405,7 +467,30 @@ public class Crypt2Cloud
         return iv;
     }
     
-    private void restore(char[] pass, File cryptDir, File restored) throws Exception
+    private void list(char[] pass, File cryptDir, String pathLimit) throws Exception
+    {
+        SecretKey key = getKey(pass, cryptDir);
+        List<CryptFile> list = getFilesFromMeta(key, "", cryptDir);
+        Stack<CryptFile> files = new Stack<>();
+        files.addAll(list);
+        while(files.isEmpty() == false)
+        {
+            CryptFile f = files.pop();
+            if(f.isDirectory)
+            {
+                list = getFilesFromMeta(key, f.path, cryptDir);
+                files.addAll(list);
+            }
+            if(f.path.startsWith(pathLimit))
+            {
+	            DateFormat format = DateFormat.getDateTimeInstance();
+	            System.out.print(format.format(new Date(f.lastModified)));
+	            System.out.println(" " + f.path);
+            }
+        }
+    }
+    
+    private void restore(char[] pass, File cryptDir, File restored, String pathLimit) throws Exception
     {
         SecretKey key = getKey(pass, cryptDir);
         List<CryptFile> list = getFilesFromMeta(key, "", cryptDir);
@@ -418,11 +503,14 @@ public class Crypt2Cloud
             File file = new File(restored, f.path);
             if(f.isDirectory)
             {
-                file.mkdirs();
+            	if(f.path.startsWith(pathLimit))
+        		{
+        			file.mkdirs();
+        		}
                 list = getFilesFromMeta(key, f.path, cryptDir);
                 files.addAll(list);
             }
-            else
+            else if(f.path.startsWith(pathLimit))
             {
                 InputStream in = new BufferedInputStream(new FileInputStream(cryptedFile));
                 byte[] iv = readIV(in);
@@ -435,8 +523,8 @@ public class Crypt2Cloud
                 in.close();
                 out.close();
                 file.setLastModified(f.lastModified);
+                System.out.println(file + " restored from " + cryptedFile);
             }
-            System.out.println(file + " restored from " + cryptedFile);
         }
     }
 
@@ -473,7 +561,7 @@ public class Crypt2Cloud
 
     public static String toHex(byte[] data)
     {
-        StringBuffer buf = new StringBuffer();
+        StringBuilder buf = new StringBuilder();
         for(int i=0;i<data.length;i++)
         {
             byte b = data[i];
