@@ -4,6 +4,13 @@ Do not trust your Cloud. Always encrypt data before uploading.
 This tool makes an AES encrypted backup of some folder directly in the cloud. There is no redundant data on your local drive.
 Even the Metadata like filenames are encrypted, so nobody will be able to see any information about the data you uploaded.
 
+## features
+- Encrypts/Decrypts data on the fly 
+- Works incrementally (backups only changed files)
+- Completely scrambles files and directories. You wont see any difference
+- Can do partial backups or restores
+- Single Executable which does not need to be installed for Windows and Linux. Other Platforms can use the single jar Java Version.
+
 ## license
 This code is licensed under conditions of GPL-v3.
 
