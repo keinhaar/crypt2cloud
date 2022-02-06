@@ -16,7 +16,6 @@ import java.security.SecureRandom;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.KeySpec;
 import java.text.DateFormat;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -43,7 +42,8 @@ import javax.crypto.spec.SecretKeySpec;
 public class Crypt2Cloud
 {
     private static final String version = "1";
-    Set<File> filesInUse = new HashSet<>();
+    private Set<File> filesInUse = new HashSet<>();
+    private Properties config = new Properties();
     
     public static void main(String[] args) throws Exception
     {
@@ -56,30 +56,69 @@ public class Crypt2Cloud
             System.exit(-1);
         }
         Crypt2Cloud cs = new Crypt2Cloud();
+        File configfile = new File(getArgumentValue(args, "--config", "/etc/crypt2cloud.config" ));
+        if(configfile.exists())
+        {
+            BufferedInputStream in = new BufferedInputStream(new FileInputStream(configfile));
+            cs.config.load(in);
+            in.close();
+        }
+        configfile = new File(getArgumentValue(args, "--config", System.getProperty("user.home") + "/.crypt2cloud.config" ));
+        if(configfile.exists())
+        {
+            BufferedInputStream in = new BufferedInputStream(new FileInputStream(configfile));
+            cs.config.load(in);
+            in.close();
+        }
+        if(cs.config.getProperty("password") != null)
+        {
+            char[] pass = cs.config.getProperty("password").toCharArray();
+            cs.config.put("password", pass);
+        }
+        String dir = getArgumentValue(args, "--plaindir", null);
+        if(dir != null)
+        {
+            cs.config.put("plaindir", dir);
+        }
+        dir = getArgumentValue(args, "--cryptdir", null);
+        if(dir != null)
+        {
+            cs.config.put("cryptdir", dir);
+        }
+        dir = getArgumentValue(args, "--path", null);
+        if(dir != null)
+        {
+            cs.config.put("path", dir);
+        }
+        String p = getArgumentValue(args, "--password", null);
+        if(p != null)
+        {
+            char[] pass = p.toCharArray();
+            cs.config.put("password", pass);
+            p = null;
+        }
         File plainDir = null;
         File cryptDir = null;
         String path = null;
         char[] pass = null;
         try
         {
-            plainDir = new File(getArgumentValue(args, "--plaindir", null));
-            cryptDir = new File(getArgumentValue(args, "--cryptdir", null));
-            String p = getArgumentValue(args, "--password", null);            
-            path = getArgumentValue(args, "--path", null); 
+            plainDir = new File(cs.config.getProperty("plaindir"));
+            cryptDir = new File(cs.config.getProperty("cryptdir"));
+            pass = (char[]) cs.config.get("password");
+            path = cs.config.getProperty("path"); 
             if(path == null)
             {
             	path = "";
             }
             else
             {
-            	path.replace('\\', '/');
+            	path = path.replace('\\', '/');
             	if(path.charAt(0) != '/')
             	{
             		path = "/" + path;
             	}
             }
-            pass = p.toCharArray();
-            p = null;
         }
         catch(Exception ex)
         {
@@ -104,6 +143,7 @@ public class Crypt2Cloud
                 cs.list(pass, cryptDir, path);
             }
         }
+        System.out.println("Finished");
     }
 
     /**
@@ -136,11 +176,20 @@ public class Crypt2Cloud
     {
         System.err.println("Usage:");
         System.err.println("crypt2cloud [--backup | --restore | --list] --password PASSWORD --plaindir DIRECTORY --cryptdir DIRECTORY [--path SUBPATH]");
+        System.err.println("crypt2cloud [--backup | --restore | --list] --config configurationfile [--plaindir DIRECTORY] [--cryptdir DIRECTORY] [--path SUBPATH]");
         System.err.println("--backup will store plain files into the crypted directory.");
         System.err.println("--restore will restore plain files from the crypted directory.");
         System.err.println("--list will list the files stored in the crypted directory.");
         System.err.println("--path will limit the operation to only the given path. Useful to limit restore to single files or directories, or if you know, that backup only needs to be performed on some directories.");
-        System.err.println("Version 1.0");
+        System.err.println("The configuration file format is just a simple key=value list. ");
+        System.err.println("Example:");
+        System.err.println("plaindir=d:/mydata/documents");
+        System.err.println("cryptdir=z:/c2c");
+        System.err.println("password=123456");
+        System.err.println("Configuration is searched and loaded from '/etc/crypt2cloud.config' and"
+            + " 'USER_HOME/.crypt2cloud.config' by default.");
+        System.err.println("Given commandline parameters will allways be used instead of configuration parameters.");
+        System.err.println("Version 1.1");
     }
     
     public static String getArgumentValue(String[] args, String arg,String defaultValue)
@@ -261,7 +310,7 @@ public class Crypt2Cloud
                 props.store(out, null);
                 out.close();
                 System.out.println(f + " stored meta to " + filex);
-                System.out.println("Total Size: " + totalSize);
+                System.out.println("Total Size: " + (totalSize/1024/1024) + " MB");
             }
         }
         deleteOldFiles(cryptDir, filesInUse);
